@@ -1,89 +1,155 @@
-"""프로젝트 02 — RAG 문서 검색 시스템"""
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
+﻿from fastapi import FastAPI, Depends, HTTPException
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from database import Base, engine, get_db
-from models import User, Document, QAHistory
-from schemas import AskRequest, QAResponse
+from models import User, QAHistory
+from schemas import AskRequest, SignupRequest, LoginRequest
+from response import ApiResponse
 from auth import get_current_user, TokenData
-from rag_pipeline import process_document, ask_question
-import shutil, os, hashlib
+from jwt_utils import (
+    hash_password, verify_password,
+    create_access_token, decode_token
+)
+from rag_pipeline import ask_question
 from contextlib import asynccontextmanager
+import json
+from dotenv import load_dotenv
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(bind=engine)
     yield
 
-app = FastAPI(title="RAG 문서 검색 시스템", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title="Legal RAG API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+AVAILABLE_LAWS = [
+    "근로기준법",
+    "최저임금법",
+    "근로자퇴직급여보장법",
+    "남녀고용평등과 일·가정 양립 지원에 관한 법률",
+    "고용보험법",
+]
 
-@app.post("/api/v1/documents/upload", status_code=201)
-async def upload_document(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+security = HTTPBearer(auto_error=False)
+
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> Optional[TokenData]:
+    if not credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+        if payload.get("type") != "access":
+            return None
+        return TokenData(
+            user_id  = payload["user_id"],
+            username = payload["username"],
+            role     = payload.get("role", "USER")
+        )
+    except Exception:
+        return None
+
+@app.post("/api/v1/auth/signup", status_code=201)
+async def signup(req: SignupRequest, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.email == req.email).first():
+        raise HTTPException(409, "이미 사용 중인 이메일입니다.")
+    if db.query(User).filter(User.username == req.username).first():
+        raise HTTPException(409, "이미 사용 중인 사용자명입니다.")
+    user = User(
+        username      = req.username,
+        email         = req.email,
+        password_hash = hash_password(req.password),
+        role          = "USER"
+    )
+    db.add(user); db.commit(); db.refresh(user)
+    return ApiResponse.ok(
+        data    = {"user_id": user.id, "username": user.username, "email": user.email},
+        message = "회원가입이 완료되었습니다."
+    )
+
+@app.post("/api/v1/auth/login")
+async def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.")
+    token = create_access_token({
+        "user_id":  user.id,
+        "username": user.username,
+        "role":     user.role
+    })
+    return ApiResponse.ok(
+        data    = {"access_token": token, "token_type": "bearer", "username": user.username},
+        message = "로그인이 완료되었습니다."
+    )
+
+@app.get("/api/v1/laws")
+async def get_laws():
+    return ApiResponse.ok(data=AVAILABLE_LAWS)
+
+@app.post("/api/v1/qa/ask")
+async def ask(
+    req: AskRequest,
+    db: Session = Depends(get_db),
+    cur: Optional[TokenData] = Depends(get_optional_user)
+):
+    result = await ask_question(
+        question  = req.question,
+        user_id   = cur.user_id if cur else None,
+        law_names = req.law_names
+    )
+    if cur:
+        qa = QAHistory(
+            user_id  = cur.user_id,
+            question = req.question,
+            answer   = result["answer"],
+            sources  = json.dumps(result["sources"], ensure_ascii=False)
+        )
+        db.add(qa); db.commit()
+    return ApiResponse.ok(data=result)
+
+@app.get("/api/v1/qa/history")
+async def qa_history(
+    page: int = 1,
+    size: int = 10,
     db: Session = Depends(get_db),
     cur: TokenData = Depends(get_current_user)
 ):
-    if file.content_type not in ["application/pdf", "text/plain",
-                                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-        raise HTTPException(400, "PDF, TXT, DOCX 파일만 업로드 가능합니다.")
-    content  = await file.read()
-    md5      = hashlib.md5(content).hexdigest()
-    existing = db.query(Document).filter(Document.md5_hash == md5,
-                                          Document.user_id == cur.user_id).first()
-    if existing:
-        raise HTTPException(409, "동일한 파일이 이미 업로드되어 있습니다.")
-    file_path = os.path.join(UPLOAD_DIR, f"{cur.user_id}_{md5}_{file.filename}")
-    with open(file_path, "wb") as f:
-        f.write(content)
-    doc = Document(
-        user_id   = cur.user_id,
-        filename  = file.filename,
-        file_path = file_path,
-        file_size = len(content),
-        md5_hash  = md5,
-        status    = "PROCESSING"
+    offset = (page - 1) * size
+    items = (
+        db.query(QAHistory)
+        .filter(QAHistory.user_id == cur.user_id)
+        .order_by(QAHistory.created_at.desc())
+        .offset(offset)
+        .limit(size)
+        .all()
     )
-    db.add(doc); db.commit(); db.refresh(doc)
-    background_tasks.add_task(process_document, doc.id, file_path, db)
-    return {"id": doc.id, "filename": doc.filename, "status": "PROCESSING"}
-
-@app.get("/api/v1/documents")
-async def list_documents(db: Session = Depends(get_db),
-                         cur: TokenData = Depends(get_current_user)):
-    docs = db.query(Document).filter(Document.user_id == cur.user_id).all()
-    return [{"id": d.id, "filename": d.filename, "status": d.status,
-             "chunk_count": d.chunk_count, "file_size": d.file_size} for d in docs]
-
-@app.delete("/api/v1/documents/{doc_id}", status_code=204)
-async def delete_document(doc_id: int, db: Session = Depends(get_db),
-                           cur: TokenData = Depends(get_current_user)):
-    doc = db.query(Document).filter(Document.id == doc_id,
-                                     Document.user_id == cur.user_id).first()
-    if not doc: raise HTTPException(404, "문서를 찾을 수 없습니다.")
-    if os.path.exists(doc.file_path): os.remove(doc.file_path)
-    db.delete(doc); db.commit()
-
-@app.post("/api/v1/qa/ask")
-async def ask(req: AskRequest, db: Session = Depends(get_db),
-              cur: TokenData = Depends(get_current_user)):
-    result = await ask_question(req.question, cur.user_id, req.document_ids)
-    qa = QAHistory(user_id=cur.user_id, question=req.question,
-                   answer=result["answer"], sources=str(result["sources"]))
-    db.add(qa); db.commit()
-    return result
-
-@app.get("/api/v1/qa/history")
-async def qa_history(db: Session = Depends(get_db),
-                     cur: TokenData = Depends(get_current_user)):
-    items = (db.query(QAHistory).filter(QAHistory.user_id == cur.user_id)
-               .order_by(QAHistory.created_at.desc()).limit(50).all())
-    return [{"id": i.id, "question": i.question, "answer": i.answer,
-             "created_at": i.created_at} for i in items]
+    total = db.query(QAHistory).filter(QAHistory.user_id == cur.user_id).count()
+    return ApiResponse.ok(data={
+        "items": [
+            {
+                "id":         i.id,
+                "question":   i.question,
+                "answer":     i.answer,
+                "sources":    json.loads(i.sources) if i.sources else [],
+                "created_at": i.created_at.isoformat()
+            }
+            for i in items
+        ],
+        "total": total,
+        "page":  page,
+        "size":  size
+    })
 
 if __name__ == "__main__":
-    import uvicorn; uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

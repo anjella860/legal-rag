@@ -1,100 +1,103 @@
-"""RAG 파이프라인 — 문서 처리 + 벡터 검색 + GPT 응답 생성"""
-import os
+﻿import os
 from typing import List, Optional
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from sqlalchemy.orm import Session
-from models import Document
+from dotenv import load_dotenv
 
-CHROMA_DIR  = "./chroma_db"
-EMBED_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")
+load_dotenv()
+
+CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
+
+SYSTEM_PROMPT = """당신은 한국 노동법령 전문 AI 어시스턴트입니다.
+참고 법령 조문을 기반으로 답변하세요.
+
+1. 관련된 법령 조문 내용을 바탕으로 답변해주세요.
+2. 조문에 없는 내용은 "해당 법령에서 해당 정보를 찾을 수 없습니다."라고 답변해주세요.
+3. 답변은 이해하기 쉬운 쉬운 말로 작성해주세요.
+4. 답변 마지막에 참고한 조문을 포함해주세요.
+   "이 답변은 참고용이며 법적 효력이 있는 해석이 아닙니다."
+"""
 
 RAG_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
-    template="""아래 문서 내용을 바탕으로 질문에 답변하세요.
-문서에 없는 내용은 "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
-
-문서 내용:
+    template=SYSTEM_PROMPT + """
+[참고 법령 조문]
 {context}
 
-질문: {question}
+[질문]
+{question}
 
-답변:"""
+[답변]"""
 )
 
-def process_document(doc_id: int, file_path: str, db: Session):
-    """문서를 청크로 분할하고 벡터 DB에 저장"""
-    try:
-        # 파일 로드
-        if file_path.endswith(".pdf"):
-            loader = PyPDFLoader(file_path)
-        else:
-            loader = TextLoader(file_path, encoding="utf-8")
-
-        pages    = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-        chunks   = splitter.split_documents(pages)
-
-        # 메타데이터에 doc_id 추가
-        for chunk in chunks:
-            chunk.metadata["doc_id"] = str(doc_id)
-
-        # ChromaDB에 저장
-        Chroma.from_documents(
-            documents        = chunks,
-            embedding        = EMBED_MODEL,
-            persist_directory= CHROMA_DIR,
-            collection_name  = "documents"
-        )
-
-        # DB 상태 업데이트
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if doc:
-            doc.chunk_count = len(chunks)
-            doc.status      = "READY"
-            db.commit()
-
-    except Exception as e:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if doc:
-            doc.status = "ERROR"
-            db.commit()
-
-async def ask_question(question: str, user_id: int,
-                       document_ids: Optional[List[int]] = None) -> dict:
-    """질문에 대해 RAG 기반 답변 생성"""
-    vectordb = Chroma(
-        persist_directory = CHROMA_DIR,
-        embedding_function= EMBED_MODEL,
-        collection_name   = "documents"
+def get_embed_model():
+    return HuggingFaceEmbeddings(
+        model_name="jhgan/ko-sroberta-multitask",
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True}
     )
 
-    # 검색 필터 (특정 문서만 검색)
+async def ask_question(
+    question: str,
+    user_id: Optional[int] = None,
+    law_names: Optional[List[str]] = None
+) -> dict:
+    embed_model = get_embed_model()
+
+    vectordb = Chroma(
+        persist_directory  = CHROMA_DIR,
+        embedding_function = embed_model,
+        collection_name    = "law_articles"
+    )
+
     search_kwargs = {"k": 4}
-    if document_ids:
-        search_kwargs["filter"] = {"doc_id": {"$in": [str(d) for d in document_ids]}}
+
+    if law_names:
+        search_kwargs["filter"] = {
+            "law_name": {"$in": law_names}
+        }
 
     retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
 
-    llm  = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatGroq(
+        model="llama-3.1-8b-instant",
+        temperature=0,
+        api_key=os.getenv("GROQ_API_KEY")
+    )
+
     chain = RetrievalQA.from_chain_type(
-        llm            = llm,
-        retriever      = retriever,
+        llm               = llm,
+        retriever         = retriever,
         chain_type_kwargs = {"prompt": RAG_PROMPT},
         return_source_documents = True
     )
 
-    result  = chain.invoke({"query": question})
+    result = chain.invoke({"query": question})
+
     sources = []
+    seen = set()
     for doc in result.get("source_documents", []):
+        law_name      = doc.metadata.get("law_name", "")
+        article_no    = doc.metadata.get("article_no", "")
+        article_title = doc.metadata.get("article_title", "")
+        key = f"{law_name}_{article_no}"
+
+        if key in seen:
+            continue
+        seen.add(key)
+
         sources.append({
-            "doc_id":  doc.metadata.get("doc_id"),
-            "page":    doc.metadata.get("page", 0),
-            "content": doc.page_content[:200]
+            "law_name":      law_name,
+            "article_no":    article_no,
+            "article_title": article_title,
+            "content":       doc.page_content[:300]
         })
 
-    return {"answer": result["result"], "sources": sources}
+    return {
+        "answer":  result["result"],
+        "sources": sources,
+        "saved":   user_id is not None
+    }

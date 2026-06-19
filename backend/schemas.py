@@ -1,10 +1,15 @@
-from pydantic import BaseModel
+﻿from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
-class AskRequest(BaseModel):
-    question:     str
-    document_ids: Optional[List[int]] = None
+class SignupRequest(BaseModel):
+    username: str
+    email:    EmailStr
+    password: str
 
-class QAResponse(BaseModel):
-    answer:  str
-    sources: List[dict]
+class LoginRequest(BaseModel):
+    email:    EmailStr
+    password: str
+
+class AskRequest(BaseModel):
+    question:  str
+    law_names: Optional[List[str]] = None

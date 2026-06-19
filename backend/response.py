@@ -1,5 +1,4 @@
-"""공통 API 응답 포맷"""
-from typing import Any, Optional
+﻿from typing import Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
 

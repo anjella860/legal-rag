@@ -1,8 +1,4 @@
-"""
-공통 JWT 유틸리티 (FastAPI 프로젝트 전용)
-모든 FastAPI 기반 프로젝트에서 공유하여 사용
-"""
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 from typing import Optional
 import jwt
 from fastapi import HTTPException, Security
@@ -12,8 +8,8 @@ from pydantic import BaseModel
 
 SECRET_KEY  = "your-256-bit-secret-key-change-in-production"
 ALGORITHM   = "HS256"
-ACCESS_EXP  = 60 * 24        # 24시간(분)
-REFRESH_EXP = 60 * 24 * 7   # 7일(분)
+ACCESS_EXP  = 60 * 24
+REFRESH_EXP = 60 * 24 * 7
 
 pwd_ctx  = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
