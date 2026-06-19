@@ -13,11 +13,21 @@ CHROMA_DIR  = os.getenv("CHROMA_DIR", "./chroma_db")
 BASE_URL    = "http://www.law.go.kr/DRF"
 
 TARGET_LAWS = [
-    {"query": "근로기준법",         "name": "근로기준법"},
-    {"query": "최저임금법",         "name": "최저임금법"},
-    {"query": "근로자퇴직급여보장법", "name": "근로자퇴직급여 보장법"},
-    {"query": "남녀고용평등",        "name": "남녀고용평등과 일ㆍ가정 양립 지원에 관한 법률"},
-    {"query": "고용보험법",         "name": "고용보험법"},
+    {"query": "근로기준법",         "name": "근로기준법",         "category": "노동/고용"},
+    {"query": "최저임금법",         "name": "최저임금법",         "category": "노동/고용"},
+    {"query": "근로자퇴직급여보장법", "name": "근로자퇴직급여 보장법", "category": "노동/고용"},
+    {"query": "남녀고용평등",        "name": "남녀고용평등과 일ㆍ가정 양립 지원에 관한 법률", "category": "노동/고용"},
+    {"query": "고용보험법",         "name": "고용보험법",         "category": "노동/고용"},
+    {"query": "주택임대차보호법",    "name": "주택임대차보호법",   "category": "주거/임대"},
+    {"query": "상가건물임대차보호법", "name": "상가건물 임대차보호법", "category": "주거/임대"},
+    {"query": "집합건물",           "name": "집합건물의 소유 및 관리에 관한 법률", "category": "주거/임대"},
+    {"query": "소비자기본법",        "name": "소비자기본법",       "category": "소비자/생활"},
+    {"query": "전자상거래",         "name": "전자상거래 등에서의 소비자보호에 관한 법률", "category": "소비자/생활"},
+    {"query": "할부거래",           "name": "할부거래에 관한 법률", "category": "소비자/생활"},
+    {"query": "개인정보보호법",      "name": "개인정보 보호법",    "category": "개인정보/디지털"},
+    {"query": "정보통신망법",        "name": "정보통신망 이용촉진 및 정보보호 등에 관한 법률", "category": "개인정보/디지털"},
+    {"query": "청년고용촉진특별법",  "name": "청년고용촉진 특별법", "category": "청년/취업"},
+    {"query": "직업안정법",         "name": "직업안정법",         "category": "청년/취업"},
 ]
 
 def get_embed_model():
@@ -63,7 +73,7 @@ def fetch_law_content(mst: str) -> str | None:
     resp.encoding = "utf-8"
     return resp.text
 
-def parse_articles(xml_text: str, law_name: str) -> list[dict]:
+def parse_articles(xml_text: str, law_name: str, category: str) -> list[dict]:
     root = ET.fromstring(xml_text)
     chunks = []
 
@@ -97,6 +107,7 @@ def parse_articles(xml_text: str, law_name: str) -> list[dict]:
             "content": full_content,
             "metadata": {
                 "law_name":      law_name,
+                "category":      category,
                 "article_no":    f"제{jo_no}조",
                 "article_title": jo_title,
                 "collected_at":  datetime.date.today().isoformat(),
@@ -139,7 +150,7 @@ def main():
 
     total = 0
     for law in TARGET_LAWS:
-        print(f"\n[{law['name']}] 처리 중...")
+        print(f"\n[{law['category']}] [{law['name']}] 처리 중...")
 
         mst = fetch_law_id(law["query"], law["name"])
         if not mst:
@@ -150,7 +161,7 @@ def main():
             print(f"  본문 조회 실패: {law['name']}")
             continue
 
-        chunks = parse_articles(xml_text, law["name"])
+        chunks = parse_articles(xml_text, law["name"], law["category"])
         print(f"  파싱된 조문 수: {len(chunks)}개")
 
         count = load_to_chroma(chunks, embed_model)
