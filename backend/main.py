@@ -12,8 +12,9 @@ from jwt_utils import (
     hash_password, verify_password,
     create_access_token, decode_token
 )
-from rag_pipeline import ask_question
+from rag_pipeline import ask_question, search_precedent
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
 import json
 from dotenv import load_dotenv
 load_dotenv()
@@ -59,7 +60,13 @@ AVAILABLE_LAWS = {
     ],
 }
 
+PREC_CATEGORIES = ["노동/고용", "주거/임대", "소비자/생활", "개인정보/디지털", "청년/취업"]
+
 security = HTTPBearer(auto_error=False)
+
+class PrecSearchRequest(BaseModel):
+    question: str
+    category: Optional[str] = None
 
 async def get_optional_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -116,6 +123,10 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 async def get_laws():
     return ApiResponse.ok(data=AVAILABLE_LAWS)
 
+@app.get("/api/v1/prec/categories")
+async def get_prec_categories():
+    return ApiResponse.ok(data=PREC_CATEGORIES)
+
 @app.post("/api/v1/qa/ask")
 async def ask(
     req: AskRequest,
@@ -131,6 +142,27 @@ async def ask(
         qa = QAHistory(
             user_id  = cur.user_id,
             question = req.question,
+            answer   = result["answer"],
+            sources  = json.dumps(result["sources"], ensure_ascii=False)
+        )
+        db.add(qa); db.commit()
+    return ApiResponse.ok(data=result)
+
+@app.post("/api/v1/prec/search")
+async def prec_search(
+    req: PrecSearchRequest,
+    db: Session = Depends(get_db),
+    cur: Optional[TokenData] = Depends(get_optional_user)
+):
+    result = await search_precedent(
+        question = req.question,
+        user_id  = cur.user_id if cur else None,
+        category = req.category
+    )
+    if cur:
+        qa = QAHistory(
+            user_id  = cur.user_id,
+            question = f"[판례] {req.question}",
             answer   = result["answer"],
             sources  = json.dumps(result["sources"], ensure_ascii=False)
         )
