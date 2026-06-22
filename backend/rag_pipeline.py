@@ -1,4 +1,5 @@
 ﻿import os
+import re
 from langchain.chains.question_answering import load_qa_chain
 from typing import List, Optional
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -37,6 +38,12 @@ LAW_PROMPT = PromptTemplate(
 7. 임차권등기명령은 소유권 보호가 아니라 대항력과 우선변제권 유지를 위한 제도임을 구분해서 설명하세요.
 8. 여러 법령이 함께 검색된 경우, 먼저 질문과 가장 직접 관련된 기본 법령을 중심으로 답변하고, 다른 법령은 추가 참고로만 구분해서 설명하세요.
 9. 연차휴가 수당 여부는 사용촉진 조치 여부, 미사용 사유, 근로관계 종료 여부에 따라 달라질 수 있으므로 단정하지 말고 조건별로 설명하세요.
+10. 참고 조문 중 질문과 직접 관련 없는 조문은 답변에 사용하지 마세요. 직접 관련성이 낮은 조문은 참고 조문 목록에도 포함하지 마세요.
+11. 같은 문장이나 같은 의미의 설명을 반복하지 마세요.
+12. 답변은 핵심 답변, 조문 해석, 적용 조건, 주의사항, 참고 조문을 포함하되 각 항목은 3문장 이내로 작성하세요.
+13. 여러 참고 조문이 제공된 경우, 첫 번째 참고 조문을 가장 핵심 근거로 보고 답변하세요. 뒤의 조문은 보조 근거로만 사용하세요.
+14. 참고 조문 목록에 여러 조문이 있더라도, 질문에 직접 답하는 조문이 아니면 핵심 답변의 중심으로 삼지 마세요.
+15. 같은 의미의 문장을 반복하지 말고, 핵심 답변에서는 사용자의 질문에 대한 실제 대응 방법을 함께 제시하세요.
 답변 형식:
 [핵심 답변]
 사용자의 질문에 대한 결론을 2~4문장으로 설명합니다.
@@ -223,6 +230,227 @@ def expand_query(question: str) -> str:
     return expanded_question
 
 
+def select_law_names(question: str) -> Optional[List[str]]:
+    law_rules = [
+        {
+            "keywords": [
+                "임금",
+                "임금체불",
+                "임금 체불",
+                "월급",
+                "급여",
+                "연차",
+                "연차휴가",
+                "연차 수당",
+                "부당해고",
+                "부당 해고",
+                "해고",
+                "근로계약서",
+                "근로 계약서",
+                "근로계약",
+                "근로시간",
+                "야근",
+                "연장근로",
+                "휴일근로",
+                "직장 내 괴롭힘",
+                "직장내괴롭힘",
+                "괴롭힘",
+            ],
+            "laws": ["근로기준법"],
+        },
+        {
+            "keywords": [
+                "퇴직금",
+                "퇴직급여",
+                "퇴직 연금",
+                "퇴직연금",
+            ],
+            "laws": ["근로자퇴직급여 보장법", "근로기준법"],
+        },
+        {
+            "keywords": [
+                "최저임금",
+                "최저 임금",
+                "수습기간",
+                "수습 기간",
+            ],
+            "laws": ["최저임금법", "근로기준법"],
+        },
+        {
+            "keywords": [
+                "육아휴직",
+                "육아 휴직",
+                "육아기",
+                "출산휴가",
+                "출산 휴가",
+                "배우자 출산",
+                "일가정",
+                "일ㆍ가정",
+            ],
+            "laws": ["남녀고용평등과 일ㆍ가정 양립 지원에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "주택",
+                "전세",
+                "월세",
+                "집주인",
+                "임대인",
+                "임차인",
+                "보증금",
+                "계약갱신",
+                "계약 갱신",
+                "임차권등기",
+                "임차권 등기",
+            ],
+            "laws": ["주택임대차보호법"],
+        },
+        {
+            "keywords": [
+                "상가",
+                "권리금",
+                "상가 임대차",
+                "상가임대차",
+            ],
+            "laws": ["상가건물 임대차보호법"],
+        },
+        {
+            "keywords": [
+                "온라인 쇼핑몰",
+                "인터넷 쇼핑",
+                "전자상거래",
+                "통신판매",
+                "배송",
+                "배송 지연",
+                "환불",
+                "청약철회",
+                "청약 철회",
+            ],
+            "laws": ["전자상거래 등에서의 소비자보호에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "방문판매",
+                "전화권유판매",
+            ],
+            "laws": ["방문판매 등에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "할부",
+                "할부거래",
+            ],
+            "laws": ["할부거래에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "개인정보",
+                "개인 정보",
+                "개인정보 유출",
+                "개인정보 침해",
+                "동의 철회",
+                "처리정지",
+                "제3자 제공",
+                "개인정보 제공",
+            ],
+            "laws": ["개인정보 보호법"],
+        },
+        {
+            "keywords": [
+                "신용정보",
+                "개인신용정보",
+            ],
+            "laws": ["신용정보의 이용 및 보호에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "위치정보",
+                "개인위치정보",
+            ],
+            "laws": ["위치정보의 보호 및 이용 등에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "채용",
+                "채용서류",
+                "채용 서류",
+                "구직자",
+                "채용절차",
+            ],
+            "laws": ["채용절차의 공정화에 관한 법률"],
+        },
+        {
+            "keywords": [
+                "산업재해",
+                "산재",
+                "안전조치",
+                "보건조치",
+                "작업중지",
+                "안전보건",
+                "근로자가 다치",
+            ],
+            "laws": ["산업안전보건법"],
+        },
+    ]
+
+    selected = []
+
+    for rule in law_rules:
+        if any(keyword in question for keyword in rule["keywords"]):
+            selected.extend(rule["laws"])
+
+    selected = list(dict.fromkeys(selected))
+
+    return selected if selected else None
+
+
+def extract_query_terms(question: str) -> List[str]:
+    terms = re.findall(r"[가-힣A-Za-z0-9]+", question)
+
+    stopwords = {
+        "은",
+        "는",
+        "이",
+        "가",
+        "을",
+        "를",
+        "에",
+        "에서",
+        "으로",
+        "로",
+        "하고",
+        "하면",
+        "되나요",
+        "되면",
+        "수",
+        "있나요",
+        "있는지",
+        "어떻게",
+        "무엇",
+        "언제",
+        "왜",
+        "회사",
+        "근로자",
+        "소비자",
+        "임차인",
+        "사업자",
+        "사업주",
+    }
+
+    filtered_terms = []
+
+    for term in terms:
+        if len(term) <= 1:
+            continue
+
+        if term in stopwords:
+            continue
+
+        filtered_terms.append(term)
+
+    return list(dict.fromkeys(filtered_terms))
+
+
 def rerank_docs(question: str, docs: list):
     priority_map = {
         "임금체불": [
@@ -337,6 +565,8 @@ def rerank_docs(question: str, docs: list):
         if keyword in question:
             priority_terms.extend(terms)
 
+    query_terms = extract_query_terms(question)
+
     scored_docs = []
 
     for doc in docs:
@@ -344,9 +574,33 @@ def rerank_docs(question: str, docs: list):
         metadata = doc.metadata
         score = 0
 
+        law_name = metadata.get("law_name", "")
+        article_title = metadata.get("article_title", "")
+        article_no = metadata.get("article_no", "")
+
+        # 1. 기존 주제별 보정 점수
         for term in priority_terms:
             if term in text:
                 score += 10
+
+        # 2. 일반형 rerank: 질문 단어가 조문 제목/본문에 포함되면 자동 가점
+        for term in query_terms:
+            if term in article_title:
+                score += 8
+
+            if term in law_name:
+                score += 5
+
+            if term in text:
+                score += 3
+
+        # 3. 조문 제목이 질문에 직접 포함되면 강한 가점
+        if article_title and article_title in question:
+            score += 15
+
+        # 4. 조문번호가 질문에 직접 포함되면 가점
+        if article_no and article_no in question:
+            score += 10
 
         if "임금체불" in question or "임금 체불" in question:
             weak_terms = [
@@ -381,19 +635,6 @@ def rerank_docs(question: str, docs: list):
                 if term in text:
                     score -= 10
 
-        law_name = metadata.get("law_name", "")
-        article_title = metadata.get("article_title", "")
-        article_no = metadata.get("article_no", "")
-
-        if law_name and law_name in question:
-            score += 5
-
-        if article_title and article_title in question:
-            score += 5
-
-        if article_no and article_no in question:
-            score += 5
-
         scored_docs.append((score, doc))
 
     scored_docs.sort(key=lambda x: x[0], reverse=True)
@@ -412,18 +653,38 @@ async def ask_question(
 
     search_question = expand_query(question)
 
-    filter_arg = None
-    if law_names:
-        filter_arg = {"law_name": {"$in": law_names}}
+    selected_laws = law_names if law_names else select_law_names(question)
 
-    docs = vectordb.similarity_search(
+    filter_arg = None
+    if selected_laws:
+        filter_arg = {"law_name": {"$in": selected_laws}}
+
+    docs = vectordb.max_marginal_relevance_search(
         search_question,
         k=12,
+        fetch_k=30,
+        lambda_mult=0.7,
         filter=filter_arg,
     )
 
+    # 자동 법령 필터를 적용했는데 결과가 너무 적으면 전체 법령에서 다시 검색
+    if selected_laws and len(docs) < 3:
+        docs = vectordb.max_marginal_relevance_search(
+            search_question,
+            k=12,
+            fetch_k=30,
+            lambda_mult=0.7,
+        )
+
     reranked_docs = rerank_docs(question, docs)
-    selected_docs = reranked_docs[:5]
+    selected_docs = reranked_docs[:3]
+
+    if not selected_docs:
+        return {
+            "answer": "질문과 직접 관련된 법령 조문을 찾지 못했습니다. 질문을 조금 더 구체적으로 입력해 주세요.",
+            "sources": [],
+            "saved": False,
+        }
 
     chain = load_qa_chain(
         llm=get_llm(),
