@@ -1,4 +1,5 @@
 ﻿import os
+from langchain.chains.question_answering import load_qa_chain
 from typing import List, Optional
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -18,7 +19,7 @@ print(f"임베딩 모델 디바이스: {device}")
 _embed_model = HuggingFaceEmbeddings(
     model_name="jhgan/ko-sroberta-multitask",
     model_kwargs={"device": device},
-    encode_kwargs={"normalize_embeddings": True}
+    encode_kwargs={"normalize_embeddings": True},
 )
 print("임베딩 모델 로딩 완료 (캐시됨)")
 
@@ -33,6 +34,9 @@ LAW_PROMPT = PromptTemplate(
 4. 필요한 경우 적용 조건, 예외, 주의사항을 구분해서 설명하세요.
 5. 참고 자료에 없는 내용은 추측하지 마세요.
 6. 답변 마지막에 참고한 법령명, 조문번호, 조문제목을 정리하세요.
+7. 임차권등기명령은 소유권 보호가 아니라 대항력과 우선변제권 유지를 위한 제도임을 구분해서 설명하세요.
+8. 여러 법령이 함께 검색된 경우, 먼저 질문과 가장 직접 관련된 기본 법령을 중심으로 답변하고, 다른 법령은 추가 참고로만 구분해서 설명하세요.
+9. 연차휴가 수당 여부는 사용촉진 조치 여부, 미사용 사유, 근로관계 종료 여부에 따라 달라질 수 있으므로 단정하지 말고 조건별로 설명하세요.
 답변 형식:
 [핵심 답변]
 사용자의 질문에 대한 결론을 2~4문장으로 설명합니다.
@@ -54,7 +58,7 @@ LAW_PROMPT = PromptTemplate(
 [사용자 질문]
 {question}
 
-[답변]"""
+[답변]""",
 )
 
 PREC_PROMPT = PromptTemplate(
@@ -76,7 +80,7 @@ PREC_PROMPT = PromptTemplate(
 [질문]
 {question}
 
-[답변]"""
+[답변]""",
 )
 
 EXPC_PROMPT = PromptTemplate(
@@ -106,7 +110,7 @@ EXPC_PROMPT = PromptTemplate(
 [사용자 질문]
 {question}
 
-[답변]"""
+[답변]""",
 )
 
 DETC_PROMPT = PromptTemplate(
@@ -142,7 +146,7 @@ DETC_PROMPT = PromptTemplate(
 [사용자 질문]
 {question}
 
-[답변]"""
+[답변]""",
 )
 
 INTEGRATED_PROMPT = PromptTemplate(
@@ -184,201 +188,444 @@ INTEGRATED_PROMPT = PromptTemplate(
 [사용자 질문]
 {question}
 
-[답변]"""
+[답변]""",
 )
+
 
 def get_llm():
     return ChatGroq(
-        model="llama-3.1-8b-instant",
-        temperature=0,
-        api_key=os.getenv("GROQ_API_KEY")
+        model="llama-3.1-8b-instant", temperature=0, api_key=os.getenv("GROQ_API_KEY")
     )
+
+
+def expand_query(question: str) -> str:
+    keyword_map = {
+        "임금체불": "임금체불 임금 체불 임금 지급 금품 청산 체불임금 근로기준법 제36조 제43조 제109조",
+        "임금 체불": "임금체불 임금 체불 임금 지급 금품 청산 체불임금 근로기준법 제36조 제43조 제109조",
+        "퇴직금": "퇴직금 퇴직 급여 금품 청산 근로자퇴직급여 보장법",
+        "연차": "연차휴가 유급휴가 연차 유급휴가 근로기준법 제60조",
+        "부당해고": "부당해고 부당 해고 해고 제한 노동위원회 구제신청",
+        "부당 해고": "부당해고 부당 해고 해고 제한 노동위원회 구제신청",
+        "보증금": "보증금 반환 임대차 임차권등기명령 주택임대차보호법 상가건물 임대차보호법",
+        "개인정보 유출": "개인정보 유출 개인정보 침해 손해배상 개인정보 보호법",
+        "개인정보침해": "개인정보 침해 개인정보 유출 손해배상 개인정보 보호법",
+        "근로계약서": "근로계약서 근로 계약서 근로조건 명시 서면 명시 근로기준법 제17조 임금 소정근로시간 휴일 연차 유급휴가",
+        "근로계약": "근로계약 근로 계약 근로조건 명시 서면 명시 근로기준법 제17조",
+        "계약서": "근로계약서 근로조건 명시 서면 명시 근로기준법 제17조",
+    }
+
+    expanded_question = question
+
+    for keyword, extra_terms in keyword_map.items():
+        if keyword in question:
+            expanded_question += " " + extra_terms
+
+    return expanded_question
+
+
+def rerank_docs(question: str, docs: list):
+    priority_map = {
+        "임금체불": [
+            "제36조",
+            "제37조",
+            "제43조",
+            "제43조의2",
+            "제43조의8",
+            "제109조",
+            "금품 청산",
+            "미지급 임금",
+            "임금 지급",
+            "체불 임금",
+            "벌칙",
+        ],
+        "임금 체불": [
+            "제36조",
+            "제37조",
+            "제43조",
+            "제43조의2",
+            "제43조의8",
+            "제109조",
+            "금품 청산",
+            "미지급 임금",
+            "임금 지급",
+            "체불 임금",
+            "벌칙",
+        ],
+        "퇴직금": [
+            "제9조",
+            "퇴직금의 지급",
+            "14일 이내",
+            "퇴직금",
+            "퇴직급여",
+            "제8조",
+            "제44조",
+            "벌칙",
+            "금품 청산",
+        ],
+        "연차": [
+            "연차",
+            "유급휴가",
+            "제60조",
+            "근로기준법",
+        ],
+        "부당해고": [
+            "해고",
+            "부당해고",
+            "해고 제한",
+            "노동위원회",
+            "구제신청",
+            "제23조",
+            "제28조",
+        ],
+        "보증금": [
+            "보증금 반환",
+            "임차권등기",
+            "임대차",
+            "주택임대차보호법",
+            "상가건물 임대차보호법",
+            "대항력",
+            "우선변제권",
+        ],
+        "전세": [
+            "전세보증금",
+            "보증금 반환",
+            "임차권등기",
+            "주택임대차보호법",
+            "대항력",
+            "우선변제권",
+        ],
+        "개인정보": [
+            "개인정보",
+            "개인정보 보호법",
+            "개인정보 유출",
+            "개인정보 침해",
+            "안전조치",
+            "손해배상",
+            "제3자 제공",
+        ],
+        "환불": [
+            "환불",
+            "청약철회",
+            "전자상거래",
+            "소비자",
+            "손해배상",
+            "소비자보호",
+        ],
+        "근로계약서": [
+            "제17조",
+            "근로조건의 명시",
+            "근로계약서",
+            "서면",
+            "임금",
+            "소정근로시간",
+            "휴일",
+            "연차 유급휴가",
+        ],
+        "근로계약": [
+            "제17조",
+            "근로조건의 명시",
+            "근로계약",
+            "서면",
+            "임금",
+            "소정근로시간",
+        ],
+    }
+
+    priority_terms = []
+
+    for keyword, terms in priority_map.items():
+        if keyword in question:
+            priority_terms.extend(terms)
+
+    scored_docs = []
+
+    for doc in docs:
+        text = doc.page_content
+        metadata = doc.metadata
+        score = 0
+
+        for term in priority_terms:
+            if term in text:
+                score += 10
+
+        if "임금체불" in question or "임금 체불" in question:
+            weak_terms = [
+                "제19조",
+                "근로조건의 위반",
+                "제45조",
+                "비상시 지급",
+            ]
+
+            for term in weak_terms:
+                if term in text:
+                    score -= 8
+
+        if (
+            "근로계약서" in question
+            or "근로 계약서" in question
+            or "근로계약" in question
+        ):
+            weak_terms = [
+                "제26조",
+                "해고의 예고",
+                "파견근로자",
+                "근로자파견",
+                "계약의 해지",
+                "근로시간 면제",
+                "노동조합",
+                "제93조",
+                "취업규칙",
+            ]
+
+            for term in weak_terms:
+                if term in text:
+                    score -= 10
+
+        law_name = metadata.get("law_name", "")
+        article_title = metadata.get("article_title", "")
+        article_no = metadata.get("article_no", "")
+
+        if law_name and law_name in question:
+            score += 5
+
+        if article_title and article_title in question:
+            score += 5
+
+        if article_no and article_no in question:
+            score += 5
+
+        scored_docs.append((score, doc))
+
+    scored_docs.sort(key=lambda x: x[0], reverse=True)
+
+    return [doc for score, doc in scored_docs]
+
 
 async def ask_question(
-    question: str,
-    user_id: Optional[int] = None,
-    law_names: Optional[List[str]] = None
+    question: str, user_id: Optional[int] = None, law_names: Optional[List[str]] = None
 ) -> dict:
     vectordb = Chroma(
-        persist_directory  = CHROMA_DIR,
-        embedding_function = _embed_model,
-        collection_name    = "law_articles"
+        persist_directory=CHROMA_DIR,
+        embedding_function=_embed_model,
+        collection_name="law_articles",
     )
-    search_kwargs = {"k": 3}
+
+    search_question = expand_query(question)
+
+    filter_arg = None
     if law_names:
-        search_kwargs["filter"] = {"law_name": {"$in": law_names}}
-    retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
-    chain = RetrievalQA.from_chain_type(
-        llm               = get_llm(),
-        retriever         = retriever,
-        chain_type_kwargs = {"prompt": LAW_PROMPT},
-        return_source_documents = True
+        filter_arg = {"law_name": {"$in": law_names}}
+
+    docs = vectordb.similarity_search(
+        search_question,
+        k=12,
+        filter=filter_arg,
     )
-    result = chain.invoke({"query": question})
+
+    reranked_docs = rerank_docs(question, docs)
+    selected_docs = reranked_docs[:5]
+
+    chain = load_qa_chain(
+        llm=get_llm(),
+        chain_type="stuff",
+        prompt=LAW_PROMPT,
+    )
+
+    result = chain.invoke(
+        {
+            "input_documents": selected_docs,
+            "question": question,
+        }
+    )
+
     sources = []
     seen = set()
-    for doc in result.get("source_documents", []):
-        law_name      = doc.metadata.get("law_name", "")
-        article_no    = doc.metadata.get("article_no", "")
+
+    for doc in selected_docs:
+        law_name = doc.metadata.get("law_name", "")
+        article_no = doc.metadata.get("article_no", "")
         article_title = doc.metadata.get("article_title", "")
         key = f"{law_name}_{article_no}"
+
         if key in seen:
             continue
+
         seen.add(key)
-        sources.append({
-            "law_name":      law_name,
-            "article_no":    article_no,
-            "article_title": article_title,
-            "content":       doc.page_content[:300]
-        })
-    return {"answer": result["result"], "sources": sources, "saved": user_id is not None}
+        sources.append(
+            {
+                "law_name": law_name,
+                "article_no": article_no,
+                "article_title": article_title,
+                "content": doc.page_content[:300],
+            }
+        )
+
+    return {
+        "answer": result["output_text"],
+        "sources": sources,
+        "saved": user_id is not None,
+    }
+
 
 async def search_precedent(
-    question: str,
-    user_id: Optional[int] = None,
-    category: Optional[str] = None
+    question: str, user_id: Optional[int] = None, category: Optional[str] = None
 ) -> dict:
     vectordb = Chroma(
-        persist_directory  = CHROMA_DIR,
-        embedding_function = _embed_model,
-        collection_name    = "precedents"
+        persist_directory=CHROMA_DIR,
+        embedding_function=_embed_model,
+        collection_name="precedents",
     )
-    search_kwargs = {"k": 3}
+    search_kwargs = {"k": 8}
     if category:
         search_kwargs["filter"] = {"category": category}
     retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
     chain = RetrievalQA.from_chain_type(
-        llm               = get_llm(),
-        retriever         = retriever,
-        chain_type_kwargs = {"prompt": PREC_PROMPT},
-        return_source_documents = True
+        llm=get_llm(),
+        retriever=retriever,
+        chain_type_kwargs={"prompt": PREC_PROMPT},
+        return_source_documents=True,
+    )
+    result = chain.invoke({"query": expand_query(question)})
+    sources = []
+    seen = set()
+    for doc in result.get("source_documents", []):
+        case_name = doc.metadata.get("case_name", "")
+        case_no = doc.metadata.get("case_no", "")
+        court = doc.metadata.get("court", "")
+        date = doc.metadata.get("date", "")
+        case_type = doc.metadata.get("case_type", "")
+        key = f"{case_no}"
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append(
+            {
+                "case_name": case_name,
+                "case_no": case_no,
+                "court": court,
+                "date": date,
+                "case_type": case_type,
+                "content": doc.page_content[:300],
+            }
+        )
+    return {
+        "answer": result["result"],
+        "sources": sources,
+        "saved": user_id is not None,
+    }
+
+
+async def search_interpretation(
+    question: str, user_id: Optional[int] = None, category: Optional[str] = None
+) -> dict:
+    vectordb = Chroma(
+        persist_directory=CHROMA_DIR,
+        embedding_function=_embed_model,
+        collection_name="interpretations",
+    )
+    search_kwargs = {"k": 8}
+    if category:
+        search_kwargs["filter"] = {"category": category}
+    retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
+    chain = RetrievalQA.from_chain_type(
+        llm=get_llm(),
+        retriever=retriever,
+        chain_type_kwargs={"prompt": EXPC_PROMPT},
+        return_source_documents=True,
     )
     result = chain.invoke({"query": question})
     sources = []
     seen = set()
     for doc in result.get("source_documents", []):
         case_name = doc.metadata.get("case_name", "")
-        case_no   = doc.metadata.get("case_no", "")
-        court     = doc.metadata.get("court", "")
-        date      = doc.metadata.get("date", "")
-        case_type = doc.metadata.get("case_type", "")
-        key = f"{case_no}"
-        if key in seen:
-            continue
-        seen.add(key)
-        sources.append({
-            "case_name": case_name,
-            "case_no":   case_no,
-            "court":     court,
-            "date":      date,
-            "case_type": case_type,
-            "content":   doc.page_content[:300]
-        })
-    return {"answer": result["result"], "sources": sources, "saved": user_id is not None}
-
-async def search_interpretation(
-    question: str,
-    user_id: Optional[int] = None,
-    category: Optional[str] = None
-) -> dict:
-    vectordb = Chroma(
-        persist_directory  = CHROMA_DIR,
-        embedding_function = _embed_model,
-        collection_name    = "interpretations"
-    )
-    search_kwargs = {"k": 3}
-    if category:
-        search_kwargs["filter"] = {"category": category}
-    retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
-    chain = RetrievalQA.from_chain_type(
-        llm               = get_llm(),
-        retriever         = retriever,
-        chain_type_kwargs = {"prompt": EXPC_PROMPT},
-        return_source_documents = True
-    )
-    result = chain.invoke({"query": question})
-    sources = []
-    seen = set()
-    for doc in result.get("source_documents", []):
-        case_name  = doc.metadata.get("case_name", "")
-        case_no    = doc.metadata.get("case_no", "")
-        query_org  = doc.metadata.get("query_org", "")
-        reply_org  = doc.metadata.get("reply_org", "")
+        case_no = doc.metadata.get("case_no", "")
+        query_org = doc.metadata.get("query_org", "")
+        reply_org = doc.metadata.get("reply_org", "")
         reply_date = doc.metadata.get("reply_date", "")
         key = f"{case_no}"
         if key in seen:
             continue
         seen.add(key)
-        sources.append({
-            "case_name":  case_name,
-            "case_no":    case_no,
-            "query_org":  query_org,
-            "reply_org":  reply_org,
-            "reply_date": reply_date,
-            "content":    doc.page_content[:300]
-        })
-    return {"answer": result["result"], "sources": sources, "saved": user_id is not None}
+        sources.append(
+            {
+                "case_name": case_name,
+                "case_no": case_no,
+                "query_org": query_org,
+                "reply_org": reply_org,
+                "reply_date": reply_date,
+                "content": doc.page_content[:300],
+            }
+        )
+    return {
+        "answer": result["result"],
+        "sources": sources,
+        "saved": user_id is not None,
+    }
+
 
 async def search_constitutional(
-    question: str,
-    user_id: Optional[int] = None,
-    category: Optional[str] = None
+    question: str, user_id: Optional[int] = None, category: Optional[str] = None
 ) -> dict:
     vectordb = Chroma(
-        persist_directory  = CHROMA_DIR,
-        embedding_function = _embed_model,
-        collection_name    = "constitutional"
+        persist_directory=CHROMA_DIR,
+        embedding_function=_embed_model,
+        collection_name="constitutional",
     )
     search_kwargs = {"k": 3}
     if category:
         search_kwargs["filter"] = {"category": category}
     retriever = vectordb.as_retriever(search_kwargs=search_kwargs)
     chain = RetrievalQA.from_chain_type(
-        llm               = get_llm(),
-        retriever         = retriever,
-        chain_type_kwargs = {"prompt": DETC_PROMPT},
-        return_source_documents = True
+        llm=get_llm(),
+        retriever=retriever,
+        chain_type_kwargs={"prompt": DETC_PROMPT},
+        return_source_documents=True,
     )
     result = chain.invoke({"query": question})
     sources = []
     seen = set()
     for doc in result.get("source_documents", []):
         case_name = doc.metadata.get("case_name", "")
-        case_no   = doc.metadata.get("case_no", "")
-        date      = doc.metadata.get("date", "")
+        case_no = doc.metadata.get("case_no", "")
+        date = doc.metadata.get("date", "")
         case_type = doc.metadata.get("case_type", "")
         key = f"{case_no}"
         if key in seen:
             continue
         seen.add(key)
-        sources.append({
-            "case_name": case_name,
-            "case_no":   case_no,
-            "date":      date,
-            "case_type": case_type,
-            "content":   doc.page_content[:300]
-        })
-    return {"answer": result["result"], "sources": sources, "saved": user_id is not None}
+        sources.append(
+            {
+                "case_name": case_name,
+                "case_no": case_no,
+                "date": date,
+                "case_type": case_type,
+                "content": doc.page_content[:300],
+            }
+        )
+    return {
+        "answer": result["result"],
+        "sources": sources,
+        "saved": user_id is not None,
+    }
+
 
 async def search_integrated(
-    question: str,
-    user_id: Optional[int] = None,
-    category: Optional[str] = None
+    question: str, user_id: Optional[int] = None, category: Optional[str] = None
 ) -> dict:
     collections = [
-        ("law_articles",    "법령"),
-        ("precedents",      "판례"),
+        ("law_articles", "법령"),
+        ("precedents", "판례"),
         ("interpretations", "법령해석례"),
-        ("constitutional",  "헌재결정례"),
+        ("constitutional", "헌재결정례"),
     ]
 
     all_docs = []
     for col_name, col_type in collections:
         try:
             vectordb = Chroma(
-                persist_directory  = CHROMA_DIR,
-                embedding_function = _embed_model,
-                collection_name    = col_name
+                persist_directory=CHROMA_DIR,
+                embedding_function=_embed_model,
+                collection_name=col_name,
             )
             search_kwargs = {"k": 2}
             if category and col_name != "law_articles":
@@ -391,10 +638,12 @@ async def search_integrated(
             print(f"  {col_name} 검색 오류: {e}")
             continue
 
-    context = "\n\n".join([
-        f"[{doc.metadata.get('collection_type', '')}]\n{doc.page_content[:500]}"
-        for doc in all_docs
-    ])
+    context = "\n\n".join(
+        [
+            f"[{doc.metadata.get('collection_type', '')}]\n{doc.page_content[:500]}"
+            for doc in all_docs
+        ]
+    )
 
     llm = get_llm()
     prompt_text = INTEGRATED_PROMPT.format(context=context, question=question)
@@ -406,25 +655,31 @@ async def search_integrated(
     for doc in all_docs:
         col_type = doc.metadata.get("collection_type", "")
         if col_type == "법령":
-            key = f"{doc.metadata.get('law_name','')}_{doc.metadata.get('article_no','')}"
+            key = (
+                f"{doc.metadata.get('law_name','')}_{doc.metadata.get('article_no','')}"
+            )
             if key not in seen:
                 seen.add(key)
-                sources.append({
-                    "type":          "법령",
-                    "law_name":      doc.metadata.get("law_name", ""),
-                    "article_no":    doc.metadata.get("article_no", ""),
-                    "article_title": doc.metadata.get("article_title", ""),
-                    "content":       doc.page_content[:200]
-                })
+                sources.append(
+                    {
+                        "type": "법령",
+                        "law_name": doc.metadata.get("law_name", ""),
+                        "article_no": doc.metadata.get("article_no", ""),
+                        "article_title": doc.metadata.get("article_title", ""),
+                        "content": doc.page_content[:200],
+                    }
+                )
         else:
             key = doc.metadata.get("case_no", "")
             if key and key not in seen:
                 seen.add(key)
-                sources.append({
-                    "type":      col_type,
-                    "case_name": doc.metadata.get("case_name", ""),
-                    "case_no":   key,
-                    "content":   doc.page_content[:200]
-                })
+                sources.append(
+                    {
+                        "type": col_type,
+                        "case_name": doc.metadata.get("case_name", ""),
+                        "case_no": key,
+                        "content": doc.page_content[:200],
+                    }
+                )
 
     return {"answer": answer, "sources": sources, "saved": user_id is not None}
