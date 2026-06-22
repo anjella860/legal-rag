@@ -14,34 +14,152 @@ CHROMA_DIR  = os.getenv("CHROMA_DIR", "./chroma_db")
 BASE_URL    = "http://www.law.go.kr/DRF"
 
 SEARCH_KEYWORDS = [
-    {"keyword": "연차휴가",      "category": "노동/고용"},
-    {"keyword": "부당해고",      "category": "노동/고용"},
-    {"keyword": "임금체불",      "category": "노동/고용"},
-    {"keyword": "퇴직금",        "category": "노동/고용"},
-    {"keyword": "최저임금",      "category": "노동/고용"},
-    {"keyword": "육아휴직",      "category": "노동/고용"},
-    {"keyword": "직장내괴롭힘",  "category": "노동/고용"},
-    {"keyword": "해고예고",      "category": "노동/고용"},
-    {"keyword": "근로계약",      "category": "노동/고용"},
-    {"keyword": "보증금반환",    "category": "주거/임대"},
-    {"keyword": "임대차계약",    "category": "주거/임대"},
-    {"keyword": "주택임대차",    "category": "주거/임대"},
-    {"keyword": "전월세",        "category": "주거/임대"},
-    {"keyword": "명도소송",      "category": "주거/임대"},
-    {"keyword": "임대차보호",    "category": "주거/임대"},
-    {"keyword": "소비자분쟁",    "category": "소비자/생활"},
-    {"keyword": "통신판매",      "category": "소비자/생활"},
-    {"keyword": "불공정계약",    "category": "소비자/생활"},
-    {"keyword": "제조물책임",    "category": "소비자/생활"},
-    {"keyword": "방문판매",      "category": "소비자/생활"},
-    {"keyword": "개인정보유출",  "category": "개인정보/디지털"},
-    {"keyword": "개인정보침해",  "category": "개인정보/디지털"},
-    {"keyword": "정보통신망",    "category": "개인정보/디지털"},
-    {"keyword": "사이버범죄",    "category": "개인정보/디지털"},
-    {"keyword": "고용차별",      "category": "청년/취업"},
-    {"keyword": "취업규칙",      "category": "청년/취업"},
-    {"keyword": "직업안정",      "category": "청년/취업"},
+# =========================
+# 노동/고용
+# =========================
+{"keyword": "연차휴가",       "category": "노동/고용"},
+{"keyword": "연차 휴가",      "category": "노동/고용"},
+{"keyword": "유급휴가",       "category": "노동/고용"},
+{"keyword": "유급 휴가",      "category": "노동/고용"},
+
+{"keyword": "부당해고",       "category": "노동/고용"},
+{"keyword": "부당 해고",      "category": "노동/고용"},
+{"keyword": "징계해고",       "category": "노동/고용"},
+{"keyword": "징계 해고",      "category": "노동/고용"},
+{"keyword": "정리해고",       "category": "노동/고용"},
+{"keyword": "정리 해고",      "category": "노동/고용"},
+{"keyword": "해고예고",       "category": "노동/고용"},
+{"keyword": "해고 예고",      "category": "노동/고용"},
+
+{"keyword": "임금체불",       "category": "노동/고용"},
+{"keyword": "임금 체불",      "category": "노동/고용"},
+{"keyword": "퇴직금",         "category": "노동/고용"},
+{"keyword": "최저임금",       "category": "노동/고용"},
+{"keyword": "최저 임금",      "category": "노동/고용"},
+{"keyword": "통상임금",       "category": "노동/고용"},
+{"keyword": "통상 임금",      "category": "노동/고용"},
+{"keyword": "평균임금",       "category": "노동/고용"},
+{"keyword": "평균 임금",      "category": "노동/고용"},
+
+{"keyword": "근로시간",       "category": "노동/고용"},
+{"keyword": "근로 시간",      "category": "노동/고용"},
+{"keyword": "연장근로",       "category": "노동/고용"},
+{"keyword": "연장 근로",      "category": "노동/고용"},
+{"keyword": "야간근로",       "category": "노동/고용"},
+{"keyword": "야간 근로",      "category": "노동/고용"},
+{"keyword": "휴일근로",       "category": "노동/고용"},
+{"keyword": "휴일 근로",      "category": "노동/고용"},
+
+{"keyword": "육아휴직",       "category": "노동/고용"},
+{"keyword": "육아 휴직",      "category": "노동/고용"},
+{"keyword": "출산휴가",       "category": "노동/고용"},
+{"keyword": "출산 휴가",      "category": "노동/고용"},
+
+{"keyword": "직장내괴롭힘",   "category": "노동/고용"},
+{"keyword": "직장 내 괴롭힘", "category": "노동/고용"},
+{"keyword": "직장 괴롭힘",    "category": "노동/고용"},
+
+{"keyword": "근로계약",       "category": "노동/고용"},
+{"keyword": "근로 계약",      "category": "노동/고용"},
+{"keyword": "근로계약서",     "category": "노동/고용"},
+{"keyword": "근로 계약서",    "category": "노동/고용"},
+{"keyword": "수습기간",       "category": "노동/고용"},
+{"keyword": "수습 기간",      "category": "노동/고용"},
+{"keyword": "근로자성",       "category": "노동/고용"},
+{"keyword": "근로자 성",      "category": "노동/고용"},
+
+# =========================
+# 주거/임대
+# =========================
+{"keyword": "보증금반환",     "category": "주거/임대"},
+{"keyword": "보증금 반환",    "category": "주거/임대"},
+{"keyword": "전세보증금",     "category": "주거/임대"},
+{"keyword": "전세 보증금",    "category": "주거/임대"},
+{"keyword": "임대차계약",     "category": "주거/임대"},
+{"keyword": "임대차 계약",    "category": "주거/임대"},
+{"keyword": "주택임대차",     "category": "주거/임대"},
+{"keyword": "주택 임대차",    "category": "주거/임대"},
+{"keyword": "상가임대차",     "category": "주거/임대"},
+{"keyword": "상가 임대차",    "category": "주거/임대"},
+{"keyword": "전월세",         "category": "주거/임대"},
+{"keyword": "전세",           "category": "주거/임대"},
+{"keyword": "월세",           "category": "주거/임대"},
+{"keyword": "명도소송",       "category": "주거/임대"},
+{"keyword": "명도 소송",      "category": "주거/임대"},
+{"keyword": "임대차보호",     "category": "주거/임대"},
+{"keyword": "임대차 보호",    "category": "주거/임대"},
+{"keyword": "임차권등기",     "category": "주거/임대"},
+{"keyword": "임차권 등기",    "category": "주거/임대"},
+{"keyword": "계약갱신",       "category": "주거/임대"},
+{"keyword": "계약 갱신",      "category": "주거/임대"},
+{"keyword": "차임연체",       "category": "주거/임대"},
+{"keyword": "차임 연체",      "category": "주거/임대"},
+
+# =========================
+# 소비자/생활
+# =========================
+{"keyword": "소비자분쟁",     "category": "소비자/생활"},
+{"keyword": "소비자 분쟁",    "category": "소비자/생활"},
+{"keyword": "통신판매",       "category": "소비자/생활"},
+{"keyword": "통신 판매",      "category": "소비자/생활"},
+{"keyword": "전자상거래",     "category": "소비자/생활"},
+{"keyword": "전자 상거래",    "category": "소비자/생활"},
+{"keyword": "불공정계약",     "category": "소비자/생활"},
+{"keyword": "불공정 계약",    "category": "소비자/생활"},
+{"keyword": "제조물책임",     "category": "소비자/생활"},
+{"keyword": "제조물 책임",    "category": "소비자/생활"},
+{"keyword": "방문판매",       "category": "소비자/생활"},
+{"keyword": "방문 판매",      "category": "소비자/생활"},
+{"keyword": "청약철회",       "category": "소비자/생활"},
+{"keyword": "청약 철회",      "category": "소비자/생활"},
+{"keyword": "환불",           "category": "소비자/생활"},
+{"keyword": "손해배상",       "category": "소비자/생활"},
+{"keyword": "손해 배상",      "category": "소비자/생활"},
+{"keyword": "약관",           "category": "소비자/생활"},
+
+# =========================
+# 개인정보/디지털
+# =========================
+{"keyword": "개인정보유출",       "category": "개인정보/디지털"},
+{"keyword": "개인정보 유출",      "category": "개인정보/디지털"},
+{"keyword": "개인정보침해",       "category": "개인정보/디지털"},
+{"keyword": "개인정보 침해",      "category": "개인정보/디지털"},
+{"keyword": "개인정보처리",       "category": "개인정보/디지털"},
+{"keyword": "개인정보 처리",      "category": "개인정보/디지털"},
+{"keyword": "개인정보제공",       "category": "개인정보/디지털"},
+{"keyword": "개인정보 제공",      "category": "개인정보/디지털"},
+{"keyword": "개인정보 제3자 제공", "category": "개인정보/디지털"},
+{"keyword": "정보통신망",         "category": "개인정보/디지털"},
+{"keyword": "정보 통신망",        "category": "개인정보/디지털"},
+{"keyword": "정보통신서비스",      "category": "개인정보/디지털"},
+{"keyword": "정보통신 서비스",     "category": "개인정보/디지털"},
+{"keyword": "사이버범죄",         "category": "개인정보/디지털"},
+{"keyword": "사이버 범죄",        "category": "개인정보/디지털"},
+{"keyword": "위치정보",           "category": "개인정보/디지털"},
+{"keyword": "위치 정보",          "category": "개인정보/디지털"},
+{"keyword": "명예훼손",           "category": "개인정보/디지털"},
+{"keyword": "명예 훼손",          "category": "개인정보/디지털"},
+
+# =========================
+# 청년/취업
+# =========================
+{"keyword": "고용차별",       "category": "청년/취업"},
+{"keyword": "고용 차별",      "category": "청년/취업"},
+{"keyword": "취업차별",       "category": "청년/취업"},
+{"keyword": "취업 차별",      "category": "청년/취업"},
+{"keyword": "취업규칙",       "category": "청년/취업"},
+{"keyword": "취업 규칙",      "category": "청년/취업"},
+{"keyword": "직업안정",       "category": "청년/취업"},
+{"keyword": "직업 안정",      "category": "청년/취업"},
+{"keyword": "채용절차",       "category": "청년/취업"},
+{"keyword": "채용 절차",      "category": "청년/취업"},
+{"keyword": "채용비리",       "category": "청년/취업"},
+{"keyword": "채용 비리",      "category": "청년/취업"},
+{"keyword": "비정규직",       "category": "청년/취업"},
+{"keyword": "비정규 근로자",  "category": "청년/취업"},
+
 ]
+
 
 def get_embed_model():
     return HuggingFaceEmbeddings(
@@ -154,7 +272,7 @@ def main():
         category = item["category"]
         print(f"\n[{category}] [{keyword}] 판례 검색 중...")
 
-        prec_list = fetch_prec_list(keyword, display=20)
+        prec_list = fetch_prec_list(keyword, display=100)
         print(f"  검색된 판례 수: {len(prec_list)}개")
 
         if not prec_list:
@@ -178,7 +296,10 @@ def main():
 {content['판결요지']}
 
 [참조조문]
-{content['참조조문']}"""
+{content['참조조문']}
+
+[판례내용]
+{content['판례내용']}"""
 
             chunks.append({
                 "id":      f"prec_{prec['id']}",
